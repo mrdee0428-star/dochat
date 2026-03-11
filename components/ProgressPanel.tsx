@@ -106,8 +106,10 @@ export default function ProgressPanel({ progress, stores }: Props) {
                   <span className="text-xs text-emerald-400 font-medium">{entry.message}</span>
                 )}
                 {entry.status === 'error' && (
-                  <span className="text-xs text-red-400 truncate max-w-32 block" title={entry.message}>
-                    Lỗi
+                  <span className="text-xs text-red-400 truncate max-w-48 block cursor-help" title={entry.message}>
+                    {entry.message && entry.message.length > 30
+                      ? entry.message.substring(0, 30) + '...'
+                      : entry.message || 'Lỗi'}
                   </span>
                 )}
                 {entry.status === 'pending' && (

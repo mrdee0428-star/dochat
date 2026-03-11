@@ -28,7 +28,7 @@ export default function Home() {
         body: JSON.stringify({ storeId, apiKey: key }),
       });
       const data = await res.json();
-      if (data.error) {
+      if (data.error && (!data.products || data.products.length === 0)) {
         throw new Error(data.error);
       }
       return data.products || [];
@@ -52,8 +52,8 @@ export default function Home() {
     });
     setProgress(initProgress);
 
-    // Scrape with concurrency limit of 3
-    const concurrency = 3;
+    // Scrape with concurrency limit of 2 (actions + wait make each request slower)
+    const concurrency = 2;
     const queue = [...selectedStores];
     const results: Product[] = [];
 
