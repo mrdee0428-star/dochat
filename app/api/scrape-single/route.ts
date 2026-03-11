@@ -28,7 +28,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       products: result.products,
       nextPageUrl: result.nextPageUrl,
-      markdownLength: result.markdown_length,
     });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || 'Lỗi server', products: [], nextPageUrl: null });
