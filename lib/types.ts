@@ -14,6 +14,18 @@ export interface ScrapeProgress {
   message?: string;
   products?: Product[];
   duration?: number;
-  page?: number;
-  totalPages?: number;
+  currentPage?: number;
+}
+
+export interface CachedStoreData {
+  storeId: string;
+  storeName: string;
+  products: Product[];
+  crawledAt: number; // timestamp ms
+  pagesScraped: number;
+}
+
+export interface CacheStore {
+  version: number;
+  stores: Record<string, CachedStoreData>;
 }

@@ -1,4 +1,4 @@
-# PhoneCrawl - So sánh giá iPhone cũ Việt Nam
+# PhoneCrawl V6 - So sánh giá iPhone cũ Việt Nam
 
 Ứng dụng web crawl và so sánh giá iPhone cũ từ **13 cửa hàng** uy tín tại Việt Nam, sử dụng [FireCrawl API](https://firecrawl.dev) để trích xuất dữ liệu sản phẩm.
 
