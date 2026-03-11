@@ -31,16 +31,16 @@ export default function Home() {
     selectedStores.forEach(id => { initProgress[id] = { storeId: id, status: 'pending' }; });
     setProgress(initProgress);
 
-    // Sequential execution (concurrency = 1) to respect free-tier rate limits
-    // Free tier: 10 req/min, 2 concurrent browsers
-    // Each store can use 1-5 requests (pagination)
     for (const storeId of selectedStores) {
       if (abortRef.current) break;
 
       const store = STORES.find(s => s.id === storeId)!;
-      setProgress(prev => ({ ...prev, [storeId]: { storeId, status: 'scraping', message: `Đang crawl ${store.name}...` } }));
+      setProgress(prev => ({
+        ...prev,
+        [storeId]: { storeId, status: 'scraping', message: `Crawl ${store.name}...` },
+      }));
 
-      const startTime = Date.now();
+      const t0 = Date.now();
       try {
         const res = await fetch('/api/scrape-single', {
           method: 'POST',
@@ -51,10 +51,10 @@ export default function Home() {
         const text = await res.text();
         let data: any;
         try { data = JSON.parse(text); } catch {
-          throw new Error(`Server error: ${text.substring(0, 100)}`);
+          throw new Error(`Server trả lỗi: ${text.substring(0, 120)}`);
         }
 
-        const duration = Date.now() - startTime;
+        const duration = Date.now() - t0;
         const products: Product[] = data.products || [];
 
         if (products.length > 0) {
@@ -68,26 +68,30 @@ export default function Home() {
             },
           }));
         } else {
+          // Show the EXACT error from API
           setProgress(prev => ({
             ...prev,
             [storeId]: {
-              storeId, status: 'error',
-              message: data.error || '0 sản phẩm',
+              storeId, status: data.error ? 'error' : 'done',
+              message: data.error || '0 sản phẩm (trang không có sản phẩm hoặc layout không nhận diện được)',
               duration,
             },
           }));
         }
       } catch (err: any) {
-        const duration = Date.now() - startTime;
         setProgress(prev => ({
           ...prev,
-          [storeId]: { storeId, status: 'error', message: err.message || 'Lỗi', duration },
+          [storeId]: {
+            storeId, status: 'error',
+            message: err.message || 'Lỗi kết nối',
+            duration: Date.now() - t0,
+          },
         }));
       }
 
-      // Small delay between stores to avoid rate limiting
+      // 2s gap between stores for rate limit
       if (!abortRef.current) {
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
 
@@ -152,7 +156,6 @@ export default function Home() {
             <ProgressPanel progress={progress} />
           </div>
         </div>
-
         {allProducts.length > 0 && (
           <>
             <StatsBar products={allProducts} />

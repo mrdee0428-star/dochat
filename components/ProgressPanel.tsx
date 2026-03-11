@@ -67,7 +67,7 @@ export default function ProgressPanel({ progress }: Props) {
               <div className="flex-shrink-0 text-right">
                 {entry.status === 'scraping' && <span className="text-xs text-brand-400">{entry.page ? `Trang ${entry.page}...` : 'Đang crawl...'}</span>}
                 {entry.status === 'done' && <span className="text-xs text-emerald-400 font-medium">{entry.message}</span>}
-                {entry.status === 'error' && <span className="text-xs text-red-400 truncate max-w-40 block" title={entry.message}>Lỗi</span>}
+                {entry.status === 'error' && <span className="text-xs text-red-400 max-w-52 block truncate" title={entry.message}>{entry.message || 'Lỗi'}</span>}
                 {entry.status === 'pending' && <span className="text-xs text-zinc-600">Chờ...</span>}
               </div>
               {entry.duration && entry.duration > 0 && <span className="text-xs text-zinc-600 font-mono flex-shrink-0">{(entry.duration / 1000).toFixed(1)}s</span>}
