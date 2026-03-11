@@ -11,17 +11,15 @@ export async function POST(request: NextRequest) {
     if (!body) return NextResponse.json({ error: 'Invalid body', products: [], nextPageUrl: null });
 
     const { storeId, apiKey, pageUrl, pageNum } = body;
-
     if (!apiKey) return NextResponse.json({ error: 'Thiếu API key', products: [], nextPageUrl: null });
 
     const store = STORES.find(s => s.id === storeId);
     if (!store) return NextResponse.json({ error: 'Store không tồn tại', products: [], nextPageUrl: null });
 
     const url = pageUrl || store.url;
-    const page = pageNum || 1;
 
     const result = await Promise.race([
-      scrapeSinglePage(url, apiKey, store.name, store.id, store.color, page),
+      scrapeSinglePage(url, apiKey, storeId, pageNum || 1),
       new Promise<never>((_, rej) => setTimeout(() => rej(new Error('Timeout 55s')), 55000)),
     ]);
 

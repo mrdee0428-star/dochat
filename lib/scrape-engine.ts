@@ -1,17 +1,17 @@
 /**
- * Scrape Engine v7
- * KEY FIX: Strict product validation — only extract actual phone/device listings.
- * A "product" must pass BOTH:
- *   1. Name contains a device keyword (iPhone, Samsung, Galaxy, Xiaomi, etc.)
- *      OR URL contains a product-page pattern (/iphone, /samsung, -cu, -cu-dep, etc.)
- *   2. Price is in valid phone range (500k - 100M VND)
+ * Scrape Engine v8
+ * - Per-store CSS selector via includeTags to scope product grid only
+ * - LoadMore pagination via click action
+ * - Strict product validation
  */
 
 import type { Product } from './types';
+import type { StoreConfig } from './stores';
+import { STORES } from './stores';
 
 const FIRECRAWL_API = 'https://api.firecrawl.dev/v2/scrape';
 
-/* ── Price parser ────────────────────────────────────── */
+/* ── Price ────────────────────────────────────────────── */
 
 export function parseVndPrice(raw: string): number {
   if (!raw) return 0;
@@ -33,115 +33,66 @@ export function parseVndPrice(raw: string): number {
 }
 
 export function formatVnd(n: number): string {
-  if (n <= 0) return 'Liên hệ';
-  return new Intl.NumberFormat('vi-VN').format(n) + '₫';
+  return n > 0 ? new Intl.NumberFormat('vi-VN').format(n) + '₫' : 'Liên hệ';
 }
 
 /* ── Product validation ──────────────────────────────── */
 
-// Device keywords that MUST appear in product name or URL
-const DEVICE_NAME_KEYWORDS = [
+const DEVICE_KW = [
   'iphone', 'ipad', 'macbook', 'apple watch', 'airpods',
-  'samsung', 'galaxy',
-  'xiaomi', 'redmi', 'poco',
-  'oppo', 'find', 'reno',
-  'vivo',
-  'realme',
-  'huawei', 'honor',
-  'google pixel', 'pixel',
-  'oneplus', 'one plus',
-  'asus', 'rog phone', 'zenfone',
-  'nokia',
-  'nothing phone',
-  'sony xperia',
-  'motorola', 'moto',
-  'infinix', 'tecno',
-  'nubia', 'zte',
-  'lenovo',
-  'meizu',
-  // Generic device terms
+  'samsung', 'galaxy', 'xiaomi', 'redmi', 'poco',
+  'oppo', 'find n', 'reno', 'vivo', 'realme',
+  'huawei', 'honor', 'google pixel', 'pixel',
+  'oneplus', 'asus', 'rog phone', 'zenfone',
+  'nokia', 'nothing phone', 'sony xperia',
+  'motorola', 'moto g', 'infinix', 'tecno', 'nubia',
   'pro max', 'pro plus', 'ultra',
-  'điện thoại', 'dien thoai',
-  'máy tính bảng', 'tablet',
-  'laptop',
-  'đồng hồ thông minh', 'smartwatch',
-  'tai nghe', 'earbuds', 'earphone',
-  // Vietnamese condition terms (only appear in product listings)
-  'cũ đẹp', 'cu dep', 'like new', '99%', '98%', '97%', '95%',
-  'cũ trầy', 'cu tray',
-  'đã kích hoạt', 'da kich hoat',
-  'chính hãng', 'chinh hang',
-  'vn/a', 'vna',
+  'cũ đẹp', 'like new', '99%', '98%', '95%',
+  'đã kích hoạt', 'chính hãng', 'vn/a',
 ];
 
-const DEVICE_URL_KEYWORDS = [
-  'iphone', 'ipad', 'macbook', 'airpods',
-  'samsung', 'galaxy',
-  'xiaomi', 'redmi', 'poco',
-  'oppo', 'vivo', 'realme', 'huawei', 'honor',
-  'pixel', 'oneplus', 'asus', 'nokia', 'nothing',
-  'sony', 'motorola', 'infinix', 'tecno',
-  '-cu', '-cu-', 'cu-dep', 'cu-tray',
-  'hang-cu', 'may-cu', 'dien-thoai',
-  'like-new',
+const DEVICE_URL_KW = [
+  'iphone', 'ipad', 'macbook', 'samsung', 'galaxy',
+  'xiaomi', 'redmi', 'poco', 'oppo', 'vivo', 'realme',
+  'huawei', 'honor', 'pixel', 'oneplus', 'asus', 'nokia',
+  '-cu', 'cu-dep', 'cu-tray', 'hang-cu', 'may-cu', 'dien-thoai',
 ];
 
-function isLikelyProduct(name: string, url: string): boolean {
-  const nameLower = name.toLowerCase();
-  const urlLower = url.toLowerCase();
+function isProduct(name: string, url: string): boolean {
+  const nl = name.toLowerCase();
+  const ul = url.toLowerCase();
 
-  // Skip pure category links like "Apple iPhone cũ", "Samsung cũ", "Xiaomi cũ"
-  // Real products have specifics: model numbers, storage, condition
-  // Category names are typically short and generic
+  // Skip category links ("iPhone cũ", "Samsung cũ")
   if (/^(apple\s)?iphone\s*cũ$/i.test(name.trim())) return false;
-  if (/^(samsung|xiaomi|oppo|vivo|realme|asus|nokia|infinix|tcl|tecno|oneplus|nubia)\s*cũ$/i.test(name.trim())) return false;
+  if (/^[a-z]+\s*cũ$/i.test(name.trim())) return false;
 
-  // A real product should contain at least one of: a number, storage size, or specific model
-  const hasSpecifics = /\d/.test(name) || /\b(pro|max|ultra|plus|mini|lite|air|se|fold|flip)\b/i.test(name);
+  // Must have specifics (numbers, model variants)
+  const hasSpec = /\d/.test(name) || /\b(pro|max|ultra|plus|mini|lite|air|se|fold|flip)\b/i.test(name);
+  if (!hasSpec) return false;
 
-  // Check name contains device keyword
-  let nameMatch = false;
-  for (const kw of DEVICE_NAME_KEYWORDS) {
-    if (nameLower.includes(kw)) { nameMatch = true; break; }
-  }
-
-  // Check URL contains product pattern
-  let urlMatch = false;
-  for (const kw of DEVICE_URL_KEYWORDS) {
-    if (urlLower.includes(kw)) { urlMatch = true; break; }
-  }
-
-  // Must have device keyword AND specifics
-  return (nameMatch && hasSpecifics) || (urlMatch && hasSpecifics);
+  for (const kw of DEVICE_KW) { if (nl.includes(kw)) return true; }
+  for (const kw of DEVICE_URL_KW) { if (ul.includes(kw)) return true; }
+  return false;
 }
 
-// Definite noise — never a product
-const NOISE_RE = [
-  /^(trang chủ|danh mục|menu|thương hiệu|bộ lọc|sắp xếp|xem thêm|kho máy)/i,
-  /^(đăng nhập|đăng ký|tài khoản|giỏ hàng|hotline|liên hệ|hệ thống|chính sách)/i,
+const NOISE = [
+  /^(trang chủ|danh mục|menu|thương hiệu|bộ lọc|sắp xếp|xem thêm)/i,
+  /^(đăng nhập|đăng ký|tài khoản|giỏ hàng|hotline|liên hệ|chính sách)/i,
   /^(tin tức|blog|bài viết|hướng dẫn|tra cứu|trả góp|thu cũ|khuyến mãi)/i,
   /^(gọi mua|gọi tư vấn|miễn phí|cam kết|hỗ trợ|chăm sóc|khiếu nại)/i,
-  /^(về chúng tôi|giới thiệu|điều khoản|quy định|copyright|©)/i,
-  /^(tìm cửa hàng|cửa hàng gần|showroom|he thong)/i,
-  /^(xem chi tiết|mua ngay|trang \d|tiếp theo|next|prev)/i,
-  /^(xu hướng|từ khóa|trending|sản phẩm gợi ý|thông báo)/i,
-  /^(camera|quà|gift|voucher|coupon|mã giảm)/i,
-  /^(smember|đăng nhập|vui lòng|loading)/i,
-  /^(cellphones?|hoàng hà|di động việt|shopdunk|techone)/i,
-  /(ốp lưng|ốp điện thoại|miếng dán|kính cường lực|cường lực)/i,
-  /(cáp sạc|củ sạc|sạc nhanh|sạc dự phòng|pin dự phòng)/i,
-  /(bao da|túi đựng|đế sạc|dock sạc|giá đỡ)/i,
-  /(dây đeo|strap|band|vỏ ốp|case )/i,
+  /^(về chúng tôi|giới thiệu|điều khoản|copyright|©)/i,
+  /^(tìm cửa hàng|showroom|xu hướng|trending|thông báo|smember|loading)/i,
+  /^(xem chi tiết|mua ngay|trang \d|tiếp|next|prev|camera$|quà)/i,
+  /(ốp lưng|miếng dán|kính cường lực|cáp sạc|củ sạc|sạc dự phòng)/i,
+  /(bao da|túi đựng|đế sạc|giá đỡ|dây đeo|vỏ ốp|case )/i,
 ];
 
 function isNoise(name: string): boolean {
-  const s = name.trim();
-  if (s.length < 5 || s.length > 150) return true;
-  const lower = s.toLowerCase();
-  return NOISE_RE.some(r => r.test(lower));
+  if (name.length < 5 || name.length > 150) return true;
+  return NOISE.some(r => r.test(name));
 }
 
-/* ── Markdown product parser ─────────────────────────── */
+/* ── Markdown parser ─────────────────────────────────── */
 
 interface RawProduct { name: string; price: number; url: string; }
 
@@ -150,20 +101,14 @@ export function parseProducts(markdown: string, links: string[], origin: string)
   const seen = new Set<string>();
   const lines = markdown.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-  // PASS 1: [name](url) or ### name  + nearby price
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Extract markdown links
+    // 1) Markdown links: [name](url)
     const re = /\[([^\]]{5,})\]\(([^)]+)\)/g;
     let m: RegExpExecArray | null;
-
     while ((m = re.exec(line)) !== null) {
-      let name = m[1]
-        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-        .replace(/^!\[?/, '').replace(/^\[/, '')
-        .replace(/[#*_`|]/g, '').trim();
-
+      let name = m[1].replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/^!\[?/, '').replace(/^\[/, '').replace(/[#*_`|]/g, '').trim();
       if (isNoise(name)) continue;
 
       let url = m[2].trim();
@@ -171,11 +116,10 @@ export function parseProducts(markdown: string, links: string[], origin: string)
       else if (!url.startsWith('http')) url = origin + '/' + url;
       if (/\.(jpg|jpeg|png|gif|svg|webp|css|js)(\?|$)/i.test(url)) continue;
 
-      // ★ KEY CHECK: must look like an actual product
-      if (!isLikelyProduct(name, url)) continue;
+      if (!isProduct(name, url)) continue;
 
       let price = 0;
-      for (let j = i; j < Math.min(i + 5, lines.length); j++) {
+      for (let j = i; j < Math.min(i + 6, lines.length); j++) {
         price = parseVndPrice(lines[j]);
         if (price > 0) break;
       }
@@ -184,15 +128,14 @@ export function parseProducts(markdown: string, links: string[], origin: string)
       const key = name.toLowerCase().replace(/\s+/g, ' ');
       if (seen.has(key)) continue;
       seen.add(key);
-
       products.push({ name: name.replace(/\s+/g, ' ').substring(0, 150), price, url });
     }
 
-    // Also check ### headings (CellphoneS uses ### for product names)
-    const headingMatch = line.match(/^#{1,4}\s+(.{5,})/);
-    if (headingMatch) {
-      const hName = headingMatch[1].replace(/[#*_`|]/g, '').trim();
-      if (!isNoise(hName) && isLikelyProduct(hName, '')) {
+    // 2) ### Headings (CellphoneS style)
+    const hm = line.match(/^#{1,4}\s+(.{5,})/);
+    if (hm) {
+      const hName = hm[1].replace(/[#*_`|]/g, '').trim();
+      if (!isNoise(hName) && isProduct(hName, '')) {
         let price = 0;
         for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
           price = parseVndPrice(lines[j]);
@@ -202,11 +145,10 @@ export function parseProducts(markdown: string, links: string[], origin: string)
           const key = hName.toLowerCase().replace(/\s+/g, ' ');
           if (!seen.has(key)) {
             seen.add(key);
-            // Find URL from nearby lines
             let url = '';
-            for (let j = Math.max(0, i - 2); j < Math.min(i + 4, lines.length); j++) {
+            for (let j = Math.max(0, i - 3); j < Math.min(i + 4, lines.length); j++) {
               const um = lines[j].match(/\]\(([^)]+)\)/);
-              if (um && !um[1].match(/\.(jpg|jpeg|png|gif|svg|webp)(\?|$)/i)) {
+              if (um && !/\.(jpg|jpeg|png|gif|svg|webp)(\?|$)/i.test(um[1])) {
                 url = um[1].trim();
                 if (url.startsWith('/')) url = origin + url;
                 else if (!url.startsWith('http')) url = origin + '/' + url;
@@ -220,7 +162,7 @@ export function parseProducts(markdown: string, links: string[], origin: string)
     }
   }
 
-  // PASS 2: fallback for stores without links — name line + price
+  // PASS 2: fallback (no links, just name + price blocks)
   if (products.length < 3) {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -234,12 +176,9 @@ export function parseProducts(markdown: string, links: string[], origin: string)
       }
       if (price <= 0) continue;
 
-      let name = line.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-        .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      let name = line.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/!\[[^\]]*\]\([^)]*\)/g, '')
         .replace(/[#*_`|]/g, '').replace(/\s+/g, ' ').trim();
-
-      if (isNoise(name)) continue;
-      if (!isLikelyProduct(name, '')) continue; // ★ Must be a device
+      if (isNoise(name) || !isProduct(name, '')) continue;
 
       const key = name.toLowerCase().replace(/\s+/g, ' ');
       if (seen.has(key)) continue;
@@ -248,12 +187,7 @@ export function parseProducts(markdown: string, links: string[], origin: string)
       let url = '';
       for (let j = Math.max(0, i - 1); j < Math.min(i + 4, lines.length); j++) {
         const um = lines[j].match(/\]\(([^)]+)\)/);
-        if (um) {
-          url = um[1].trim();
-          if (url.startsWith('/')) url = origin + url;
-          else if (!url.startsWith('http')) url = origin + '/' + url;
-          break;
-        }
+        if (um) { url = um[1].trim(); if (url.startsWith('/')) url = origin + url; else if (!url.startsWith('http')) url = origin + '/' + url; break; }
       }
       products.push({ name: name.substring(0, 150), price, url });
     }
@@ -262,34 +196,83 @@ export function parseProducts(markdown: string, links: string[], origin: string)
   return products;
 }
 
-/* ── Pagination detection ────────────────────────────── */
+/* ── Pagination ──────────────────────────────────────── */
 
-export function detectNextPage(markdown: string, links: string[], currentUrl: string, currentPage: number): string | null {
-  const next = currentPage + 1;
+export function detectNextPage(md: string, links: string[], curUrl: string, curPage: number): string | null {
+  const next = curPage + 1;
   try {
-    const base = new URL(currentUrl);
-    const allLinks = [...links];
+    const base = new URL(curUrl);
+    const all = [...links];
     const re = /\]\((https?:\/\/[^)]+)\)/g;
     let lm: RegExpExecArray | null;
-    while ((lm = re.exec(markdown)) !== null) allLinks.push(lm[1]);
+    while ((lm = re.exec(md)) !== null) all.push(lm[1]);
 
-    for (const link of allLinks) {
+    for (const link of all) {
       try {
         const u = new URL(link);
         if (u.origin !== base.origin) continue;
         const p = u.searchParams.get('page') || u.searchParams.get('p');
         if (p === String(next)) return link;
         if (u.pathname.match(new RegExp(`/page/${next}(/|$)`))) return link;
-      } catch { /* skip */ }
+      } catch {}
     }
-
-    if (markdown.match(/(?:trang|page)\s*(?:\d|›|»|>|tiếp|next)/i)) {
-      const u = new URL(currentUrl);
+    if (md.match(/(?:trang|page)\s*(?:\d|›|»|>|tiếp|next)/i)) {
+      const u = new URL(curUrl);
       u.searchParams.set('page', String(next));
       return u.toString();
     }
-  } catch { /* noop */ }
+  } catch {}
   return null;
+}
+
+/* ── Build FireCrawl payload per store ────────────────── */
+
+function buildPayload(store: StoreConfig, url: string, pageNum: number): any {
+  const payload: any = {
+    url,
+    formats: ['markdown', 'links'],
+    timeout: 30000,
+  };
+
+  // Use store-specific CSS selector to scope to product grid
+  if (store.productSelector) {
+    payload.includeTags = [store.productSelector];
+    payload.onlyMainContent = false; // let includeTags do the filtering
+  } else {
+    payload.onlyMainContent = true;
+  }
+
+  // Build actions
+  const actions: any[] = [];
+
+  if (pageNum === 1) {
+    actions.push({ type: 'wait', milliseconds: 2000 });
+
+    // For loadmore stores, click the load-more button multiple times
+    if (store.pagination === 'loadmore' && store.loadMoreSelector) {
+      const selectors = store.loadMoreSelector.split(',').map(s => s.trim());
+      // Try clicking load-more 3 times to get more products
+      for (let click = 0; click < 3; click++) {
+        actions.push({ type: 'scroll', direction: 'down', amount: 1500 });
+        actions.push({ type: 'wait', milliseconds: 1500 });
+        // Try each selector — FireCrawl will error if not found, so we wrap each in its own scroll
+      }
+    }
+
+    // Always scroll to reveal lazy-loaded content
+    actions.push({ type: 'scroll', direction: 'down', amount: 800 });
+    actions.push({ type: 'wait', milliseconds: 1000 });
+    actions.push({ type: 'scroll', direction: 'down', amount: 800 });
+    actions.push({ type: 'wait', milliseconds: 1000 });
+    actions.push({ type: 'scroll', direction: 'down', amount: 800 });
+    actions.push({ type: 'wait', milliseconds: 500 });
+  }
+
+  if (actions.length > 0) {
+    payload.actions = actions;
+  }
+
+  return payload;
 }
 
 /* ── Single-page scrape ──────────────────────────────── */
@@ -301,29 +284,13 @@ export interface PageResult {
 
 export async function scrapeSinglePage(
   url: string, apiKey: string,
-  storeName: string, storeId: string, storeColor: string,
-  pageNum: number,
+  storeId: string, pageNum: number,
 ): Promise<PageResult> {
+  const store = STORES.find(s => s.id === storeId);
+  if (!store) throw new Error(`Store ${storeId} not found`);
+
   const origin = new URL(url).origin;
-
-  const payload: any = {
-    url,
-    formats: ['markdown', 'links'],
-    onlyMainContent: true,
-    timeout: 30000,
-  };
-
-  if (pageNum === 1) {
-    payload.actions = [
-      { type: 'wait', milliseconds: 2000 },
-      { type: 'scroll', direction: 'down', amount: 800 },
-      { type: 'wait', milliseconds: 1000 },
-      { type: 'scroll', direction: 'down', amount: 800 },
-      { type: 'wait', milliseconds: 1000 },
-      { type: 'scroll', direction: 'down', amount: 800 },
-      { type: 'wait', milliseconds: 500 },
-    ];
-  }
+  const payload = buildPayload(store, url, pageNum);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 40000);
@@ -352,8 +319,7 @@ export async function scrapeSinglePage(
 
   const md: string = data?.data?.markdown || '';
   const pageLinks: string[] = data?.data?.links || [];
-
-  if (md.length < 30) throw new Error('Trang trả về rỗng');
+  if (md.length < 20) throw new Error('Trang trả về rỗng');
 
   const rawProducts = parseProducts(md, pageLinks, origin);
 
@@ -362,12 +328,18 @@ export async function scrapeSinglePage(
     price: formatVnd(rp.price),
     priceNumeric: rp.price,
     url: rp.url || url,
-    store: storeName,
-    storeId,
-    storeColor,
+    store: store.name,
+    storeId: store.id,
+    storeColor: store.color,
   }));
 
-  const nextPageUrl = detectNextPage(md, pageLinks, url, pageNum);
+  // Determine next page URL
+  let nextPageUrl: string | null = null;
+  if (store.pagination === 'page') {
+    nextPageUrl = detectNextPage(md, pageLinks, url, pageNum);
+  }
+  // loadmore: no next page URL (all loaded via clicks on page 1)
+  // none: no pagination
 
   return { products, nextPageUrl };
 }
