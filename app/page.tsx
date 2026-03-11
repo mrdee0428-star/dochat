@@ -21,20 +21,25 @@ export default function Home() {
   const abortRef = useRef(false);
 
   const scrapeStore = useCallback(async (storeId: string, key: string): Promise<Product[]> => {
+    const res = await fetch('/api/scrape-single', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ storeId, apiKey: key }),
+    });
+
+    // Safely read response as text first, then parse
+    const text = await res.text();
+    let data: any;
     try {
-      const res = await fetch('/api/scrape-single', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ storeId, apiKey: key }),
-      });
-      const data = await res.json();
-      if (data.error && (!data.products || data.products.length === 0)) {
-        throw new Error(data.error);
-      }
-      return data.products || [];
-    } catch (err: any) {
-      throw err;
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`Server trả về lỗi: ${text.substring(0, 120)}`);
     }
+
+    if (data.error && (!data.products || data.products.length === 0)) {
+      throw new Error(data.error);
+    }
+    return data.products || [];
   }, []);
 
   const handleScrape = useCallback(async () => {
