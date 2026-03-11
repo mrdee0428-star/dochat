@@ -47,11 +47,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Run scrape with a 50s safety timeout
+    // Run scrape with a 55s safety timeout (Vercel max is 60s)
     const result = await Promise.race([
       scrapeStore(store, apiKey),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout: vượt quá 50 giây')), 50000)
+        setTimeout(() => reject(new Error('Timeout: vượt quá 55 giây')), 55000)
       ),
     ]);
 

@@ -209,20 +209,19 @@ export function parseProductsFromMarkdown(
 async function firecrawlFetch(
   apiKey: string,
   payload: any,
-  retries = 2,
+  retries = 1,
 ): Promise<any> {
   let lastErr = '';
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
-      // Exponential backoff: 2s, 4s
-      const delay = Math.pow(2, attempt) * 1000;
-      await new Promise(r => setTimeout(r, delay));
+      // Short backoff: 1.5s
+      await new Promise(r => setTimeout(r, 1500));
     }
 
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 25000); // 25s hard timeout per request
+      const timeout = setTimeout(() => controller.abort(), 18000); // 18s hard timeout per request
 
       const res = await fetch(FIRECRAWL_API, {
         method: 'POST',
@@ -256,7 +255,7 @@ async function firecrawlFetch(
       }
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        lastErr = 'Request timeout (25s)';
+        lastErr = 'Request timeout (18s)';
         if (attempt < retries) continue;
       }
       lastErr = err.message || 'Network error';
@@ -274,26 +273,20 @@ async function firecrawlFetch(
 function buildActions(): any[] {
   return [
     // 1. Wait for initial JS render
-    { type: 'wait', milliseconds: 2000 },
+    { type: 'wait', milliseconds: 2500 },
 
-    // 2. Try to dismiss common popups/modals/cookie banners
-    // Click common close buttons (won't error if not found)
-    { type: 'click', selector: '[class*="close"]', ignoreIfNotFound: true },
-    { type: 'click', selector: '[class*="dismiss"]', ignoreIfNotFound: true },
-    { type: 'click', selector: 'button[aria-label="Close"]', ignoreIfNotFound: true },
-    { type: 'click', selector: '.modal-close', ignoreIfNotFound: true },
-    { type: 'click', selector: '#cookie-accept', ignoreIfNotFound: true },
-    { type: 'click', selector: '[class*="cookie"] button', ignoreIfNotFound: true },
+    // 2. Scroll down in measured steps to trigger lazy-loading
+    //    (amount is in pixels; typical viewport ~900px)
+    { type: 'scroll', direction: 'down', amount: 800 },
+    { type: 'wait', milliseconds: 1000 },
+    { type: 'scroll', direction: 'down', amount: 800 },
+    { type: 'wait', milliseconds: 1000 },
+    { type: 'scroll', direction: 'down', amount: 800 },
+    { type: 'wait', milliseconds: 1000 },
 
+    // 3. Scroll back to top to capture full page content
+    { type: 'scroll', direction: 'up', amount: 3000 },
     { type: 'wait', milliseconds: 500 },
-
-    // 3. Scroll down in measured steps (3 viewport heights ≈ 2700px)
-    { type: 'scroll', direction: 'down', amount: 900 },
-    { type: 'wait', milliseconds: 1000 },
-    { type: 'scroll', direction: 'down', amount: 900 },
-    { type: 'wait', milliseconds: 1000 },
-    { type: 'scroll', direction: 'down', amount: 900 },
-    { type: 'wait', milliseconds: 1500 },
   ];
 }
 
@@ -400,17 +393,22 @@ export async function scrapeStore(
   try { origin = new URL(store.url).origin; } catch { /* noop */ }
 
   for (let page = 1; page <= MAX_PAGES; page++) {
+    // Time budget: stop if we've used more than 40s (Vercel limit is 60s)
+    const elapsed = Date.now() - startTime;
+    if (elapsed > 40000) break;
+
     try {
       const payload = {
         url: currentUrl,
         formats: ['markdown', 'links'] as string[],
         onlyMainContent: false,
-        timeout: 20000,
-        waitFor: 1500,
+        timeout: 15000,
+        waitFor: 1000,
         actions: buildActions(),
       };
 
-      const data = await firecrawlFetch(apiKey, payload);
+      // First page gets 1 retry, subsequent pages get 0
+      const data = await firecrawlFetch(apiKey, payload, page === 1 ? 1 : 0);
 
       const md: string = data?.data?.markdown || '';
       const links: string[] = data?.data?.links || [];
